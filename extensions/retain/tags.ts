@@ -33,19 +33,30 @@ export const expandTagPlaceholders = (tags: string[] | null | undefined, config:
   return [...new Set(tags.map((tag) => values[tag] ?? tag).filter(Boolean))];
 };
 
-export const buildAutomaticTags = (config: Pick<HindsightConfig, "constantTags" | "projectName">, ctx: ScopeContext, storeMethod: "auto" | "tool"): string[] => {
+export const buildAutomaticTags = (config: Pick<HindsightConfig, "constantTags" | "projectName">, ctx: ScopeContext, _storeMethod: "auto" | "tool"): string[] => {
+  // Bookkeeping identifiers (session, parent, cwd, basedir, store_method) belong
+  // in document metadata, not in tags: every retain carried a session-unique tag
+  // set, so each session landed in its own observation scope and consolidation
+  // could no longer deduplicate across sessions. Tags stay audience-scoped:
+  // constantTags plus project:. Metadata keeps the identifiers for audit.
+  const cwd = cleanPath(ctx.cwd);
+  return [...new Set([
+    ...config.constantTags,
+    `project:${getProjectName(config, cwd)}`,
+  ])];
+};
+
+export const buildAutomaticMetadata = (ctx: ScopeContext, storeMethod: "auto" | "tool"): Record<string, string> => {
   const cwd = cleanPath(ctx.cwd);
   const session = ctx.sessionId || "unknown";
   const parent = ctx.parentId || session;
-  return [...new Set([
-    ...config.constantTags,
-    `session:${session}`,
-    `parent:${parent}`,
-    `cwd:${cwd}`,
-    `basedir:${getBasedir(cwd)}`,
-    `project:${getProjectName(config, cwd)}`,
-    `store_method:${storeMethod}`,
-  ])];
+  return {
+    session,
+    parent,
+    cwd,
+    basedir: getBasedir(cwd),
+    store_method: storeMethod,
+  };
 };
 
 export const expandObservationScopes = (config: Pick<HindsightConfig, "observationScopes" | "projectName">, ctx: ScopeContext): HindsightConfig["observationScopes"] => {

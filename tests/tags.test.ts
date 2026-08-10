@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAutomaticTags, expandObservationScopes, expandTagPlaceholders, getProjectName } from "../extensions/retain/tags.js";
+import { buildAutomaticMetadata, buildAutomaticTags, expandObservationScopes, expandTagPlaceholders, getProjectName } from "../extensions/retain/tags.js";
 
 describe("retain tags and scopes", () => {
   const config = { constantTags: ["harness:pi"], projectName: "stable-project", observationScopes: [["{project}"], ["{cwd}"]] } as any;
@@ -10,14 +10,18 @@ describe("retain tags and scopes", () => {
     expect(expandTagPlaceholders(["{project}", "user:me"], config, ctx)).toEqual(["project:stable-project", "user:me"]);
   });
 
-  it("builds automatic retain tags", () => {
-    expect(buildAutomaticTags(config, ctx, "auto")).toEqual(expect.arrayContaining([
-      "harness:pi",
-      "session:s1",
-      "parent:p1",
-      "project:stable-project",
-      "store_method:auto",
-    ]));
+  it("builds automatic retain tags without bookkeeping identifiers", () => {
+    expect(buildAutomaticTags(config, ctx, "auto")).toEqual(["harness:pi", "project:stable-project"]);
+  });
+
+  it("carries bookkeeping identifiers as document metadata", () => {
+    expect(buildAutomaticMetadata(ctx, "auto")).toEqual({
+      session: "s1",
+      parent: "p1",
+      cwd: "/tmp/somewhere/project",
+      basedir: "project",
+      store_method: "auto",
+    });
   });
 
   it("expands observation scopes at queue time", () => {

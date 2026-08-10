@@ -14,7 +14,7 @@ import { createRecallCustomMessage, HINDSIGHT_RECALL_CUSTOM_TYPE } from "./recal
 import { deriveRecallQuery, isContinuePrompt } from "./recall-query.js";
 import { appendQueueRecord, deleteQueue, readQueueRecords } from "./queue.js";
 import { prepareRetainEntry } from "./retain/prepare.js";
-import { buildAutomaticTags, expandObservationScopes } from "./retain/tags.js";
+import { buildAutomaticMetadata, buildAutomaticTags, expandObservationScopes } from "./retain/tags.js";
 import { deriveWorkspaceSessionName } from "./session.js";
 import { getParentSessionId, getSessionContext, getSessionDocumentId, getSessionStartTimestamp } from "./session-document.js";
 
@@ -381,7 +381,7 @@ export default function hindsightMemory(pi: ExtensionAPI): void {
       content,
       context: getSessionContext(ctx),
       tags: [...buildAutomaticTags(handles.config, { cwd: ctx.cwd, sessionId, parentId: getParentSessionId(ctx) }, "auto"), ...sessionTags(entries)],
-      metadata: { source: "pi", kind: "session-message", origin: "auto", workspace: handles.config.workspace },
+      metadata: { source: "pi", kind: "session-message", origin: "auto", workspace: handles.config.workspace, ...buildAutomaticMetadata({ cwd: ctx.cwd, sessionId, parentId: getParentSessionId(ctx) }, "auto") },
       timestamp: getSessionStartTimestamp(ctx),
       document_id: sessionId,
       update_mode: "append",
