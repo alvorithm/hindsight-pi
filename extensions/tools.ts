@@ -3,6 +3,8 @@ import { Type } from "@sinclair/typebox";
 import { ensureBank, getBankInsights, getHandles, type HindsightHandles } from "./client.js";
 import { getRecallMode, type ReasoningLevel, type SearchBudget } from "./config.js";
 import { sessionRetained } from "./meta.js";
+import { listPages, pageInScope, readPage, searchPagesInScope } from "./knowledge.js";
+import { expandTagPlaceholders, getProjectName } from "./retain/tags.js";
 
 const sanitizeTag = (value: string): string => value.toLowerCase().replace(/[^a-z0-9:_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
 
@@ -48,6 +50,36 @@ const formatResults = (results: Array<{ text?: string; type?: string; sourceHost
   return results
     .map((entry, index) => `${index + 1}. [${entry.sourceHost ?? "pi"} | ${entry.type ?? "memory"}] ${(entry.text ?? "").slice(0, preview)}`)
     .join("\n\n");
+};
+
+const PAGE_SNIPPET_LIMIT = 240;
+
+const compactSnippet = (value: string, limit: number): string => {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
+};
+
+/**
+ * The tags a page must share to count as in scope: whatever auto-recall is
+ * configured to ask for, falling back to this session's project. Untagged
+ * pages are always in scope, which `pageInScope` handles.
+ */
+const pageScopeTags = (handles: HindsightHandles, cwd: string): string[] => {
+  const configured = expandTagPlaceholders(handles.config.autoRecallTags, handles.config, { cwd });
+  if (configured && configured.length > 0) return configured;
+  return [`project:${getProjectName(handles.config, cwd)}`];
+};
+
+const formatPageLine = (
+  index: number,
+  label: string,
+  page: { id: string; name: string; path: string | null; stale?: boolean },
+  detail: string,
+): string => {
+  const where = page.path ? `${page.path}/${page.name}` : page.name;
+  const marks = page.stale ? `${page.id}, stale` : page.id;
+  const head = `${index}. [${label}] ${where} (${marks})`;
+  return detail ? `${head}\n   ${detail}` : head;
 };
 
 export const registerTools = (pi: ExtensionAPI): void => {
@@ -143,6 +175,93 @@ export const registerTools = (pi: ExtensionAPI): void => {
         content: [{ type: "text", text: sections.join("\n\n") }],
         details: { budget },
       };
+    },
+  });
+
+  pi.registerTool({
+    name: "hindsight_pages_find",
+    label: "Hindsight Pages",
+    description: "Find knowledge pages: living documents the bank maintains, one per question, each rewritten as memory consolidates. Omit the query to list every page in scope.",
+    promptSnippet: "Find knowledge pages in Hindsight.",
+    promptGuidelines: [
+      "Prefer this over hindsight_search when the question is how something works here, what a convention is, or how a subsystem is organized: a page is a reconciled document, while recall returns individual facts.",
+      "Every result carries a page id; read the page itself with hindsight_page_read.",
+    ],
+    parameters: Type.Object({
+      query: Type.Optional(Type.String({ description: "Question or topic; omit to list every page in scope" })),
+      limit: Type.Optional(Type.Number({ description: "Maximum pages per bank, 1 to 50, default 10" })),
+      scope: Type.Optional(Type.String({ description: "project (default: this project's pages plus untagged ones) or all" })),
+    }),
+    async execute(
+      _toolCallId: string,
+      params: { query?: string; limit?: number; scope?: string },
+      _signal: unknown,
+      _onUpdate: unknown,
+      ctx: { cwd: string },
+    ) {
+      if (getRecallMode() === "off") throw new Error("Hindsight memory is disabled.");
+      const handles = await ensureHandles();
+      const limit = Math.min(Math.max(Math.trunc(params.limit ?? 10), 1), 50);
+      const scopeTags = (params.scope ?? "project") === "all" ? [] : pageScopeTags(handles, ctx.cwd);
+      const lines: string[] = [];
+      let dropped = 0;
+      let count = 0;
+
+      for (const bankId of activeBankIds(handles)) {
+        const label = bankId === handles.bankId ? handles.config.workspace : `${handles.config.workspace}:global`;
+        if (params.query) {
+          const found = await searchPagesInScope(handles.config.baseUrl, handles.config.apiKey, bankId, params.query, limit, scopeTags);
+          dropped += found.dropped;
+          for (const hit of found.hits) lines.push(formatPageLine(++count, label, hit, compactSnippet(hit.snippet, PAGE_SNIPPET_LIMIT)));
+          continue;
+        }
+        const pages = (await listPages(handles.config.baseUrl, handles.config.apiKey, bankId))
+          .filter((page) => pageInScope(page.tags, scopeTags))
+          .sort((a, b) => `${a.path}/${a.name}`.localeCompare(`${b.path}/${b.name}`));
+        for (const page of pages.slice(0, limit)) lines.push(formatPageLine(++count, label, page, compactSnippet(page.description ?? "", PAGE_SNIPPET_LIMIT)));
+      }
+
+      const scopeLabel = scopeTags.length > 0 ? scopeTags.join(", ") : "every page";
+      const text = lines.length > 0
+        ? lines.join("\n")
+        : `No knowledge page in scope (${scopeLabel}). Pages are created deliberately, so a project may have none.`;
+      return {
+        content: [{ type: "text", text }],
+        details: { count, dropped, limit, scope: scopeTags.length > 0 ? scopeTags : "all" },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "hindsight_page_read",
+    label: "Hindsight Page",
+    description: "Read one knowledge page in full, by id.",
+    promptSnippet: "Read a Hindsight knowledge page.",
+    promptGuidelines: [
+      "Ids come from hindsight_pages_find.",
+      "A page is a projected view over consolidated memory rather than a file in the repository, so it states what currently holds and cites no line numbers.",
+    ],
+    parameters: Type.Object({
+      page_id: Type.String({ description: "Page id, for example kp-1a2b3c4d" }),
+      frontmatter: Type.Optional(Type.Boolean({ description: "Return the portable markdown with YAML frontmatter instead of the body, default false" })),
+    }),
+    async execute(_toolCallId: string, params: { page_id: string; frontmatter?: boolean }) {
+      if (getRecallMode() === "off") throw new Error("Hindsight memory is disabled.");
+      const handles = await ensureHandles();
+      const banks = activeBankIds(handles);
+      for (const bankId of banks) {
+        const page = await readPage(handles.config.baseUrl, handles.config.apiKey, bankId, params.page_id);
+        if (!page) continue;
+        const question = page.description ? ` answers: ${page.description}` : "";
+        const text = params.frontmatter
+          ? page.markdown
+          : `Page "${page.name}" (${page.id}, bank ${bankId})${question}\n\n${page.body}`;
+        return {
+          content: [{ type: "text", text }],
+          details: { id: page.id, bankId, tags: page.tags, builtAt: page.timestamp, chars: text.length },
+        };
+      }
+      throw new Error(`No knowledge page ${params.page_id} in ${banks.join(", ")}.`);
     },
   });
 

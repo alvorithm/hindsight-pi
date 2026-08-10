@@ -112,6 +112,53 @@ Output:
 - base URL / environment summary
 - mode summary
 
+## 5. `hindsight_pages_find`
+
+Purpose:
+- find knowledge pages, the living documents a bank maintains, one per question
+
+When model should use it:
+- the question is how something works here, what a convention is, or how a subsystem is organized
+- a reconciled document serves better than the individual facts `hindsight_search` returns
+- the user asks what standing answers exist for this project
+
+Parameters:
+
+```ts
+{
+  query?: string;   // omit to list every page in scope
+  limit?: number;   // per bank, 1 to 50, default 10
+  scope?: string;   // "project" (default) or "all"
+}
+```
+
+Scope: `project` keeps pages that share a tag with auto-recall's tags (`{project}` by default) plus untagged pages, which are the globals. Page search has no server-side tag filter, so the extension joins each hit against the knowledge-base tree and drops what falls outside the scope; `details.dropped` reports how many.
+
+Output:
+- one numbered line per page: bank label, folder path and name, page id, a `stale` mark when the page is behind its memory, and the page question or the search snippet
+
+## 6. `hindsight_page_read`
+
+Purpose:
+- read one page in full, by id
+
+When model should use it:
+- `hindsight_pages_find` named a page worth reading
+- the user asks for the standing answer rather than a summary
+
+Parameters:
+
+```ts
+{
+  page_id: string;      // from hindsight_pages_find, for example kp-1a2b3c4d
+  frontmatter?: boolean; // portable markdown with YAML frontmatter instead of the body, default false
+}
+```
+
+Output:
+- one identity line (name, id, bank, the question the page answers) followed by the page body, or the portable markdown when `frontmatter` is set
+- the page is searched for in the active bank and then the global bank; an unknown id is an error, never an empty answer
+
 ## Optional Later Tools
 
 Not required for MVP:
@@ -210,6 +257,7 @@ Extension should add prompt guidance similar to:
 - use `hindsight_search` for raw facts and evidence
 - use `hindsight_context` for synthesized memory answers
 - use `hindsight_retain` for explicit durable memories
+- use `hindsight_pages_find` and `hindsight_page_read` for standing answers: pages are reconciled documents, so prefer them for "how does X work here" over assembling facts by hand
 
 In hybrid mode injected prompt should also mention:
 - persistent memory block may be stale between refreshes
@@ -230,7 +278,7 @@ Why no direct `profile` analog in MVP:
 ## Recommended MVP Surface
 
 Implemented:
-- tools: `hindsight_search`, `hindsight_context`, `hindsight_retain`, `hindsight_bank_profile`
+- tools: `hindsight_search`, `hindsight_context`, `hindsight_retain`, `hindsight_bank_profile`, `hindsight_pages_find`, `hindsight_page_read`
 - commands: `/hindsight:setup`, `/hindsight:status`, `/hindsight:config`, `/hindsight:doctor`, `/hindsight:mode`, `/hindsight:sync`, `/hindsight:map`, `/hindsight:recall`, `/hindsight:retain`, `/hindsight:settings`
 
 ## v3 Commands

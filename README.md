@@ -94,6 +94,8 @@ Profile presets:
 - `hindsight_context` — synthesized memory context
 - `hindsight_retain` — explicit durable memory write
 - `hindsight_bank_profile` — inspect active bank
+- `hindsight_pages_find` — find knowledge pages, scoped to the project plus untagged globals
+- `hindsight_page_read` — read one knowledge page in full, by id
 
 ## Config files
 

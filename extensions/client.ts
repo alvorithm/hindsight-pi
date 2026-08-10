@@ -56,7 +56,7 @@ const authHeaders = (apiKey?: string): Record<string, string> => ({
   ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
 });
 
-const apiGet = async (baseUrl: string, apiKey: string | undefined, path: string): Promise<any | null> => {
+export const apiGet = async (baseUrl: string, apiKey: string | undefined, path: string): Promise<any | null> => {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
     method: "GET",
     headers: authHeaders(apiKey),
