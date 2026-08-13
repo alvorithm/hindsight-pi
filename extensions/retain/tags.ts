@@ -10,14 +10,25 @@ export interface ScopeContext {
 
 const cleanPath = (cwd: string): string => resolve(cwd).replace(/\\/g, "/");
 export const getBasedir = (cwd: string): string => basename(cleanPath(cwd));
-export const getProjectName = (config: Pick<HindsightConfig, "projectName">, cwd: string): string => config.projectName?.trim() || getBasedir(cwd);
+
+// A project label is an identity, not display text: the server matches tags
+// literally, so two clients that disagree on the case of one directory write
+// into two scopes that never meet, and a tag-filtered recall that finds nothing
+// looks exactly like a project with nothing yet to remember. Fold case and
+// underscores, which is what every other client of a shared bank does: omp
+// lowercases the same label at its source (can1357/oh-my-pi#8159, 17.3.0), the
+// juggler bridge kebab-cases it, and the curation adapter's fallback slug is
+// `base.lower().replace("_", "-")`. An explicit projectName is folded too, so a
+// capitalised override cannot reintroduce the split it exists to prevent.
+const foldLabel = (name: string): string => name.toLowerCase().replace(/_/g, "-");
+export const getProjectName = (config: Pick<HindsightConfig, "projectName">, cwd: string): string => foldLabel(config.projectName?.trim() || getBasedir(cwd));
 
 export const placeholderValues = (config: Pick<HindsightConfig, "projectName">, ctx: ScopeContext): Record<string, string> => {
   const cwd = cleanPath(ctx.cwd);
   const session = ctx.sessionId || "unknown";
   const parent = ctx.parentId || session;
   const basedir = getBasedir(cwd);
-  const project = config.projectName?.trim() || basedir;
+  const project = getProjectName(config, cwd);
   return {
     "{session}": `session:${session}`,
     "{parent}": `parent:${parent}`,
